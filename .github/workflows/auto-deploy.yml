@@ -1,0 +1,138 @@
+name: Auto Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  detect-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      
+      - name: Read deploy config
+        id: config
+        run: |
+          echo "Reading deploy-config.json..."
+          cat deploy-config.json
+      
+      - name: Detect changed projects
+        id: changes
+        run: |
+          # Get list of changed files
+          git diff --name-only HEAD~1 HEAD > changed_files.txt || echo "deploy-config.json" > changed_files.txt
+          
+          echo "Changed files:"
+          cat changed_files.txt
+          
+          # Check if deploy-config.json was modified (new project added)
+          if grep -q "deploy-config.json" changed_files.txt; then
+            echo "CONFIG_CHANGED=true" >> $GITHUB_OUTPUT
+            echo "Deploy config was modified - will deploy all active projects"
+          fi
+      
+      - name: Parse projects from config
+        id: projects
+        run: |
+          # Extract active projects from deploy-config.json
+          PROJECTS=$(node -e "
+            const config = require('./deploy-config.json');
+            const active = config.projects.filter(p => p.active);
+            console.log(JSON.stringify(active.map(p => ({
+              name: p.name,
+              repo: p.repository,
+              service: p.serviceName,
+              port: p.port || 8080,
+              dockerfile: p.dockerfile || 'Dockerfile'
+            }))));
+          ")
+          echo "PROJECTS=$PROJECTS" >> $GITHUB_OUTPUT
+          echo "Active projects: $PROJECTS"
+      
+      # Authenticate with Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+      
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev
+      
+      # Deploy each active project
+      - name: Deploy projects
+        run: |
+          PROJECTS='${{ steps.projects.outputs.PROJECTS }}'
+          echo "$PROJECTS" | node -e "
+            const projects = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+            const config = require('./deploy-config.json');
+            
+            projects.forEach(project => {
+              console.log(\`\n========================================\`);
+              console.log(\`Deploying: \${project.name}\`);
+              console.log(\`========================================\n\`);
+              
+              // Clone the repository
+              const repoName = project.name;
+              const repoUrl = project.repo;
+              
+              console.log(\`Cloning \${repoUrl}...\`);
+              require('child_process').execSync(\`git clone \${repoUrl} /tmp/\${repoName}\`, { stdio: 'inherit' });
+              
+              // Build and push Docker image
+              const projectId = config.googleCloud.projectId;
+              const region = config.googleCloud.region;
+              const imageName = \`\${region}-docker.pkg.dev/\${projectId}/cloud-run-source-deploy/\${project.service}\`;
+              
+              console.log(\`Building Docker image...\`);
+              require('child_process').execSync(
+                \`docker build -t \${imageName} -f /tmp/\${repoName}/\${project.dockerfile} /tmp/\${repoName}\`,
+                { stdio: 'inherit' }
+              );
+              
+              console.log(\`Pushing Docker image...\`);
+              require('child_process').execSync(\`docker push \${imageName}\`, { stdio: 'inherit' });
+              
+              // Deploy to Cloud Run
+              const deployCmd = \`
+                gcloud run deploy \${project.service} \\
+                  --image \${imageName} \\
+                  --platform managed \\
+                  --region \${region} \\
+                  --project \${projectId} \\
+                  --port \${project.port} \\
+                  --memory \${config.googleCloud.defaultConfig.memory} \\
+                  --cpu \${config.googleCloud.defaultConfig.cpu} \\
+                  --min-instances \${config.googleCloud.defaultConfig.minInstances} \\
+                  --max-instances \${config.googleCloud.defaultConfig.maxInstances} \\
+                  --timeout \${config.googleCloud.defaultConfig.timeout} \\
+                  --allow-unauthenticated \\
+                  --quiet
+              \`;
+              
+              console.log(\`Deploying to Cloud Run...\`);
+              require('child_process').execSync(deployCmd, { stdio: 'inherit' });
+              
+              console.log(\`✅ \${project.name} deployed successfully!\n\`);
+            });
+          "
+      
+      - name: Deployment complete
+        run: |
+          echo "🎉 All projects deployed successfully!"
+          echo "Check status at: https://console.cloud.google.com/run"

@@ -1,0 +1,32 @@
+{
+  "googleCloud": {
+    "projectId": "my-cloud-apps-486722",
+    "region": "us-central1",
+    "defaultConfig": {
+      "cpu": 1,
+      "memory": "512Mi",
+      "minInstances": 0,
+      "maxInstances": 1,
+      "timeout": 300,
+      "allowUnauthenticated": true,
+      "note": "maxInstances=1 is important for Socket.IO apps to maintain shared state"
+    }
+  },
+  "projects": [
+    {
+      "name": "spotai",
+      "displayName": "SpotAI Game",
+      "description": "Turn-based Q&A game with AI participant",
+      "path": "projects/spotai",
+      "serviceName": "spotai",
+      "port": 8080,
+      "repository": "https://github.com/GabrieleRomano98/SpotAI.git",
+      "dockerfile": "Dockerfile",
+      "active": true
+    }
+  ],
+  "monitoring": {
+    "budgetAlerts": [2.5, 4.5, 5.0],
+    "emailNotifications": true
+  }
+}
