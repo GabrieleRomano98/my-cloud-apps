@@ -1,126 +1,231 @@
-# My Cloud Projects - Multi-App Deployment Repository
+# Cloud Deployment Hub
 
-This repository manages multiple projects deployed to Google Cloud Run, staying within the free tier.
+Centralized deployment system for managing multiple applications on Google Cloud Run.
 
----
+## Overview
 
-## 🚀 Quick Start
+This repository automates deployments through GitHub Actions. When you push to a configured project, it automatically builds and deploys to Cloud Run.
 
-### Current Projects
-- **SpotAI** - Turn-based Q&A game with AI participant
-  - Status: ✅ Active
-  - URL: (will be set after deployment)
+## Setup
 
----
+### Prerequisites
+- Google Cloud account
+- GitHub account with repository access
 
-## 📁 Repository Structure
+### One-Time Configuration
 
-```
-my-cloud-projects/
-├── projects/                    # All your applications
-│   ├── spotai/                 # SpotAI game
-│   ├── project2/               # Future project
-│   └── project3/               # Future project
-├── deploy-config.json          # Deployment configuration
-├── README.md                   # This file
-└── DEPLOY_GUIDE.md            # Deployment instructions
-```
+**1. Create Google Cloud Service Account**
 
----
+In Google Cloud Console (IAM & Admin → Service Accounts):
+- Create service account
+- Add roles: Cloud Run Admin, Cloud Build Editor, Artifact Registry Administrator, Service Account User
+- Generate and download JSON key
 
-## 🎯 How to Add a New Project
+**2. Add Secret to This Repository**
 
-### 1. Clone Your New Project
-```bash
-cd projects
-git clone YOUR_REPO_URL project-name
-```
+In GitHub repository settings → Secrets and variables → Actions:
+- Name: `GCP_SA_KEY`
+- Value: Contents of the downloaded JSON key file
 
-### 2. Add Project Configuration
+**3. Configure Project List**
+
 Edit `deploy-config.json`:
 ```json
 {
+  "googleCloud": {
+    "projectId": "your-project-id",
+    "region": "us-central1"
+  },
   "projects": [
     {
-      "name": "spotai",
-      "path": "projects/spotai",
-      "serviceName": "spotai",
-      "port": 8080
-    },
-    {
-      "name": "your-new-project",
-      "path": "projects/your-new-project",
-      "serviceName": "your-new-project",
-      "port": 8080
+      "name": "myapp",
+      "repository": "https://github.com/user/myapp.git",
+      "serviceName": "myapp",
+      "port": 8080,
+      "active": true
     }
   ]
 }
 ```
 
-### 3. Deploy via Google Cloud Console UI
-See [DEPLOY_GUIDE.md](./DEPLOY_GUIDE.md) for step-by-step instructions.
+**4. Set Up Project Repositories**
 
----
+For each project that should auto-deploy:
 
-## 💰 Free Tier Management
+a) Create GitHub Personal Access Token:
+   - Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+   - Generate new token with `repo` and `workflow` scopes
+   - Copy the token
 
-### Shared Resources Across All Projects
-- **2M requests/month** total
-- **360,000 GB-seconds memory/month** total  
-- **180,000 vCPU-seconds/month** total
+b) Add to project repository secrets:
+   - Name: `DEPLOY_TOKEN`
+   - Value: Your token
 
-### Strategy
-- Each project scales to zero when idle
-- Estimated capacity: 3-5 small apps comfortably within free tier
-- Monitor usage: https://console.cloud.google.com/run
+c) Add `.github/workflows/trigger-deploy.yml` to the project:
+```yaml
+name: Deploy
 
----
+on:
+  push:
+    branches: [master, main]
 
-## 📊 Current Usage
-
-| Project | Status | Requests/Month | Notes |
-|---------|--------|----------------|-------|
-| SpotAI  | Active | ~50K | Well within limits ✅ |
-| -       | -      | -    | - |
-| -       | -      | -    | - |
-
----
-
-## 🛠️ Maintenance
-
-### Update a Project
-```bash
-cd projects/project-name
-git pull
-# Then redeploy via UI (see DEPLOY_GUIDE.md)
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deployment
+        run: |
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.DEPLOY_TOKEN }}" \
+            https://api.github.com/repos/YOUR-USERNAME/my-cloud-apps/dispatches \
+            -d '{"event_type":"deploy-request","client_payload":{"project_name":"PROJECT-NAME"}}'
 ```
 
-### Add New Project
+## Usage
+
+### Automatic Deployment
+
+Push to any configured project repository:
 ```bash
-cd projects
-git clone YOUR_NEW_REPO new-project
-# Add to deploy-config.json
-# Deploy via UI
+git push
 ```
 
----
+Deployment happens automatically within 5-10 minutes.
 
-## 📖 Documentation
+### Deploy All Projects
 
-- **[DEPLOY_GUIDE.md](./DEPLOY_GUIDE.md)** - How to deploy via Google Cloud Console UI
-- **[FREE_TIER_TIPS.md](./FREE_TIER_TIPS.md)** - Stay within free tier limits
-- Each project has its own README in `projects/project-name/`
+Push to this repository:
+```bash
+cd my-cloud-apps
+git push
+```
 
----
+### Manual Deployment
 
-## 🎯 Goals
+Use GitHub Actions tab → Run workflow manually
 
-✅ One repository for all projects  
-✅ Easy to add new projects  
-✅ Deploy via UI (no CLI needed)  
-✅ Stay within free tier  
-✅ Simple maintenance  
+## How It Works
 
----
+```
+Your Project (git push)
+  ↓
+Webhook to my-cloud-apps
+  ↓
+GitHub Actions:
+  - Clones project repository
+  - Builds Docker image
+  - Pushes to Google Artifact Registry
+  - Deploys to Cloud Run
+  ↓
+Application live at https://[service]-[hash].run.app
+```
 
-**Last Updated:** February 2026
+## Configuration Options
+
+### deploy-config.json Structure
+
+```json
+{
+  "googleCloud": {
+    "projectId": "string",
+    "region": "string",
+    "defaultConfig": {
+      "cpu": 1,
+      "memory": "512Mi",
+      "minInstances": 0,
+      "maxInstances": 1,
+      "timeout": 300
+    }
+  },
+  "projects": [
+    {
+      "name": "string",           // Internal identifier
+      "displayName": "string",    // Optional display name
+      "repository": "string",     // Full GitHub URL
+      "serviceName": "string",    // Cloud Run service name
+      "port": 8080,              // Container internal port
+      "dockerfile": "Dockerfile", // Path to Dockerfile
+      "active": true             // Enable/disable deployment
+    }
+  ]
+}
+```
+
+### Resource Limits
+
+Default settings keep you within free tier:
+- CPU: 1 vCPU
+- Memory: 512Mi
+- Min instances: 0 (scales to zero when idle)
+- Max instances: 1
+- Timeout: 300 seconds
+
+Adjust based on your needs, but monitor costs.
+
+## Monitoring
+
+### Deployment Status
+- **Workflow runs**: GitHub Actions tab
+- **Cloud Run services**: https://console.cloud.google.com/run
+- **Logs**: Cloud Run → Select service → Logs tab
+
+### Cost Tracking
+- Google Cloud Console → Billing
+- Set up budget alerts (recommended: $5/month)
+
+### Free Tier Limits
+- 2 million requests/month
+- 360,000 GB-seconds of memory
+- 180,000 vCPU-seconds
+
+## Troubleshooting
+
+### Build Failures
+Check GitHub Actions logs. Common issues:
+- Missing or invalid Dockerfile
+- Application build errors
+- Dependency installation failures
+
+### Service Won't Start
+Check Cloud Run logs for:
+- Server not binding to 0.0.0.0
+- PORT environment variable not being read
+- Application crashes on startup
+
+### Permission Errors
+Verify:
+- Service account has all required roles
+- GCP_SA_KEY secret contains valid JSON
+- GitHub token has repo and workflow scopes
+
+## Project Requirements
+
+Each deployed project needs:
+
+1. **Dockerfile** in repository root
+2. **Server configuration**:
+   ```javascript
+   const PORT = process.env.PORT || 8080;
+   server.listen(PORT, '0.0.0.0');
+   ```
+3. **Health check**: Server responds on configured port
+
+## Adding New Projects
+
+1. Ensure project has valid Dockerfile
+2. Add entry to `deploy-config.json`
+3. Add trigger workflow to project repository
+4. Push changes
+5. Project deploys automatically
+
+## Security Notes
+
+- Service account keys stored as encrypted GitHub secrets
+- Secrets never visible in logs or code
+- Use minimal IAM roles required for deployment
+- Rotate service account keys periodically
+- Review GitHub token permissions regularly
+
+## License
+
+MIT
