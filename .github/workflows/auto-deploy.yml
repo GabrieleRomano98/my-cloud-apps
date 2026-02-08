@@ -1,6 +1,8 @@
 name: Auto Deploy to Cloud Run
 
 on:
+  repository_dispatch:
+    types: [deploy-request]
   push:
     branches:
       - master
@@ -61,6 +63,29 @@ jobs:
           echo "PROJECTS=$PROJECTS" >> $GITHUB_OUTPUT
           echo "Active projects: $PROJECTS"
       
+      - name: Filter project to deploy
+        id: filter
+        run: |
+          # If triggered by repository_dispatch, only deploy that specific project
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            PROJECT_NAME="${{ github.event.client_payload.project_name }}"
+            echo "Deploying specific project: $PROJECT_NAME"
+            
+            PROJECTS='${{ steps.projects.outputs.PROJECTS }}'
+            FILTERED=$(echo "$PROJECTS" | node -e "
+              const all = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
+              const name = process.argv[1];
+              const filtered = all.filter(p => p.name === name);
+              console.log(JSON.stringify(filtered));
+            " "$PROJECT_NAME")
+            
+            echo "DEPLOY_PROJECTS=$FILTERED" >> $GITHUB_OUTPUT
+          else
+            # Deploy all active projects
+            echo "Deploying all active projects"
+            echo "DEPLOY_PROJECTS=${{ steps.projects.outputs.PROJECTS }}" >> $GITHUB_OUTPUT
+          fi
+      
       # Authenticate with Google Cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v1
@@ -100,7 +125,7 @@ jobs:
       # Deploy each active project
       - name: Deploy projects
         run: |
-          PROJECTS='${{ steps.projects.outputs.PROJECTS }}'
+          PROJECTS='${{ steps.filter.outputs.DEPLOY_PROJECTS }}'
           echo "$PROJECTS" | node -e "
             const projects = JSON.parse(require('fs').readFileSync(0, 'utf-8'));
             const config = require('./deploy-config.json');
